@@ -1,0 +1,14 @@
+{
+    admin   off
+}
+
+:8080
+
+route {
+    root * dev
+
+    trapauth
+
+    templates
+    file_server
+}

@@ -3,54 +3,144 @@ package trapauth
 import (
 	"errors"
 	"fmt"
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/dgrijalva/jwt-go"
+	"go.uber.org/zap"
 	"net/http"
+	"strings"
 )
 
-type TrapAuth struct {
-	rule Rule
-	next httpserver.Handler
-}
+const (
+	typeSoft = iota
+	typeHard
+)
+
+var (
+	_ caddy.Provisioner           = (*Middleware)(nil)
+	_ caddyhttp.MiddlewareHandler = (*Middleware)(nil)
+	_ caddyfile.Unmarshaler       = (*Middleware)(nil)
+)
 
 func init() {
-	caddy.RegisterPlugin("trapauth", caddy.Plugin{
-		ServerType: "http",
-		Action:     setup,
-	})
+	caddy.RegisterModule(Middleware{})
+	httpcaddyfile.RegisterHandlerDirective("trapauth", parseCaddyfile)
 }
 
-func setup(c *caddy.Controller) error {
-	rule, err := parseConfiguration(c)
-	if err != nil {
-		return err
+type Middleware struct {
+	Redirect    string `json:"redirect,omitempty"`
+	TokenSource string `json:"token_source,omitempty"`
+	SourceKey   string `json:"source_key,omitempty"`
+	AuthType    string `json:"auth_type,omitempty"`
+	UserHeader  string `json:"user_header,omitempty"`
+	NoStrip     bool   `json:"no_strip,omitempty"`
+
+	at int
+	ts tokenSource
+}
+
+func (Middleware) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID: "http.handlers.trapauth",
+		New: func() caddy.Module {
+			return &Middleware{
+				AuthType:    "hard",
+				UserHeader:  "X-Showcase-User",
+				TokenSource: "cookie",
+				SourceKey:   "traP_token",
+			}
+		},
+	}
+}
+
+func (m *Middleware) Provision(ctx caddy.Context) error {
+	switch strings.ToLower(m.AuthType) {
+	case "hard":
+		m.at = typeHard
+	case "soft":
+		m.at = typeSoft
+	default:
+		return fmt.Errorf("unsupported auth type: %s", m.AuthType)
 	}
 
-	c.OnStartup(func() error {
-		fmt.Println("traP authentication plugin is ready")
-		return nil
-	})
-
-	s := httpserver.GetConfig(c)
-	s.AddMiddleware(func(next httpserver.Handler) httpserver.Handler {
-		return &TrapAuth{
-			rule: rule,
-			next: next,
+	switch strings.ToLower(m.TokenSource) {
+	case "header":
+		m.ts = &headerTokenSource{}
+	case "cookie":
+		if len(m.SourceKey) == 0 {
+			return fmt.Errorf("cookie key is required")
 		}
-	})
+		m.ts = &cookieTokenSource{cookieName: m.SourceKey}
+	default:
+		return fmt.Errorf("unsupported token source: %s", m.TokenSource)
+	}
 
+	ctx.Logger(m).Info("traP authentication plugin is ready", zap.Any("config", m))
 	return nil
 }
 
-func (h *TrapAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
-	rule := h.rule
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	var m Middleware
+	err := m.UnmarshalCaddyfile(h.Dispenser)
+	return m, err
+}
 
-	r.Header.Del(rule.userHeader)
+func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		args := d.RemainingArgs()
+		switch len(args) {
+		case 0:
+			for nesting := d.Nesting(); d.NextBlock(nesting); {
+				switch d.Val() {
+				case "redirect":
+					args := d.RemainingArgs()
+					if len(args) != 1 {
+						return d.ArgErr()
+					}
+					m.Redirect = args[0]
+				case "token_source":
+					args := d.RemainingArgs()
+					if len(args) != 1 {
+						return d.ArgErr()
+					}
+					m.TokenSource = args[0]
+				case "source_key":
+					args := d.RemainingArgs()
+					if len(args) != 1 {
+						return d.ArgErr()
+					}
+					m.SourceKey = args[0]
+				case "type":
+					args := d.RemainingArgs()
+					if len(args) != 1 {
+						return d.ArgErr()
+					}
+					m.AuthType = args[0]
+				case "user_header":
+					args := d.RemainingArgs()
+					if len(args) != 1 {
+						return d.ArgErr()
+					}
+					m.UserHeader = args[0]
+				case "no_strip":
+					m.NoStrip = true
+				}
+			}
+		default:
+			return d.ArgErr()
+		}
+	}
+	return nil
+}
 
-	tokenString := rule.tokenSource.ExtractToken(r)
+func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	r.Header.Del(m.UserHeader)
+
+	tokenString := m.ts.ExtractToken(r)
 	if len(tokenString) == 0 {
-		return h.unauthorized(w, r, rule)
+		return m.unauthorized(w, r, next)
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (i interface{}, e error) {
@@ -60,35 +150,35 @@ func (h *TrapAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error
 		return pubkey, nil
 	})
 	if err != nil || !token.Valid {
-		return h.unauthorized(w, r, rule)
+		return m.unauthorized(w, r, next)
 	}
 
-	if !rule.noStrip {
-		rule.tokenSource.StripToken(r)
+	if !m.NoStrip {
+		m.ts.StripToken(r)
 	}
 
 	claims := token.Claims.(jwt.MapClaims)
 
 	if idI, ok := claims["id"]; ok {
-		r.Header.Set(rule.userHeader, idI.(string))
+		r.Header.Set(m.UserHeader, idI.(string))
 	} else if nameI, ok := claims["name"]; ok {
-		r.Header.Set(rule.userHeader, nameI.(string))
+		r.Header.Set(m.UserHeader, nameI.(string))
 	} else {
-		return h.unauthorized(w, r, rule)
+		return m.unauthorized(w, r, next)
 	}
 
-	return h.next.ServeHTTP(w, r)
+	return next.ServeHTTP(w, r)
 }
 
-func (h *TrapAuth) unauthorized(w http.ResponseWriter, r *http.Request, rule Rule) (int, error) {
-	if rule.authType == typeSoft {
-		r.Header.Set(rule.userHeader, "-")
-		return h.next.ServeHTTP(w, r)
+func (m *Middleware) unauthorized(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if m.at == typeSoft {
+		r.Header.Set(m.UserHeader, "-")
+		return next.ServeHTTP(w, r)
 	}
-	if len(rule.redirect) > 0 {
-		replacer := httpserver.NewReplacer(r, nil, "")
-		http.Redirect(w, r, replacer.Replace(rule.redirect), http.StatusSeeOther)
-		return http.StatusSeeOther, nil
+	if len(m.Redirect) > 0 {
+		repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+		http.Redirect(w, r, repl.ReplaceAll(m.Redirect, ""), http.StatusSeeOther)
+		return nil
 	}
-	return http.StatusUnauthorized, nil
+	return caddyhttp.Error(http.StatusUnauthorized, fmt.Errorf("not authenticated"))
 }
