@@ -3,14 +3,15 @@ package trapauth
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/dgrijalva/jwt-go"
 	"go.uber.org/zap"
-	"net/http"
-	"strings"
 )
 
 const (
@@ -30,12 +31,13 @@ func init() {
 }
 
 type Middleware struct {
-	Redirect    string `json:"redirect,omitempty"`
-	TokenSource string `json:"token_source,omitempty"`
-	SourceKey   string `json:"source_key,omitempty"`
-	AuthType    string `json:"auth_type,omitempty"`
-	UserHeader  string `json:"user_header,omitempty"`
-	NoStrip     bool   `json:"no_strip,omitempty"`
+	Redirect    string   `json:"redirect,omitempty"`
+	TokenSource string   `json:"token_source,omitempty"`
+	SourceKey   string   `json:"source_key,omitempty"`
+	AuthType    string   `json:"auth_type,omitempty"`
+	UserHeader  string   `json:"user_header,omitempty"`
+	NoStrip     bool     `json:"no_strip,omitempty"`
+	AcceptUser  []string `json:"accept_user,omitempty"`
 
 	at int
 	ts tokenSource
@@ -126,6 +128,8 @@ func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					m.UserHeader = args[0]
 				case "no_strip":
 					m.NoStrip = true
+				case "accept_user":
+					m.AcceptUser = d.RemainingArgs()
 				}
 			}
 		default:
@@ -159,13 +163,24 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 	claims := token.Claims.(jwt.MapClaims)
 
-	if idI, ok := claims["id"]; ok {
-		r.Header.Set(m.UserHeader, idI.(string))
-	} else if nameI, ok := claims["name"]; ok {
-		r.Header.Set(m.UserHeader, nameI.(string))
-	} else {
+	idRaw, ok := claims["id"]
+	if !ok {
+		idRaw, ok = claims["name"]
+	}
+	if !ok {
 		return m.unauthorized(w, r, next)
 	}
+
+	id := idRaw.(string)
+
+	if len(m.AcceptUser) > 0 {
+		isAccepted := isArrayContained(m.AcceptUser, id)
+		if !isAccepted {
+			return m.unauthorized(w, r, next)
+		}
+	}
+
+	r.Header.Set(m.UserHeader, id)
 
 	return next.ServeHTTP(w, r)
 }
@@ -181,4 +196,15 @@ func (m *Middleware) unauthorized(w http.ResponseWriter, r *http.Request, next c
 		return nil
 	}
 	return caddyhttp.Error(http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+}
+
+func isArrayContained(strArr []string, str string) bool {
+	isContained := false
+	for _, s := range strArr {
+		if str == s {
+			isContained = true
+			break
+		}
+	}
+	return isContained
 }
