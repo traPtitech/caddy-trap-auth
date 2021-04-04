@@ -11,5 +11,6 @@ trapauth {
     user_header [name]
     accept_user [username] [username]
     no_strip
+    invalidate_token [token] [token]
 }
 ```

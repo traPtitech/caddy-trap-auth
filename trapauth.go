@@ -31,13 +31,14 @@ func init() {
 }
 
 type Middleware struct {
-	Redirect    string   `json:"redirect,omitempty"`
-	TokenSource string   `json:"token_source,omitempty"`
-	SourceKey   string   `json:"source_key,omitempty"`
-	AuthType    string   `json:"auth_type,omitempty"`
-	UserHeader  string   `json:"user_header,omitempty"`
-	NoStrip     bool     `json:"no_strip,omitempty"`
-	AcceptUser  []string `json:"accept_user,omitempty"`
+	Redirect        string   `json:"redirect,omitempty"`
+	TokenSource     string   `json:"token_source,omitempty"`
+	SourceKey       string   `json:"source_key,omitempty"`
+	AuthType        string   `json:"auth_type,omitempty"`
+	UserHeader      string   `json:"user_header,omitempty"`
+	NoStrip         bool     `json:"no_strip,omitempty"`
+	AcceptUser      []string `json:"accept_user,omitempty"`
+	InvalidateToken []string `json:"invalidate_token,omitempty"`
 
 	at int
 	ts tokenSource
@@ -130,6 +131,8 @@ func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					m.NoStrip = true
 				case "accept_user":
 					m.AcceptUser = d.RemainingArgs()
+				case "invalidate_token":
+					m.InvalidateToken = d.RemainingArgs()
 				}
 			}
 		default:
@@ -144,6 +147,10 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 	tokenString := m.ts.ExtractToken(r)
 	if len(tokenString) == 0 {
+		return m.unauthorized(w, r, next)
+	}
+
+	if isArrayContained(m.InvalidateToken, tokenString) {
 		return m.unauthorized(w, r, next)
 	}
 
