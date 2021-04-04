@@ -9,5 +9,6 @@ trapauth {
     type [soft or hard]
     user_header [name]
     no_strip
+    invalidate_token [token] [token]
 }
 ```

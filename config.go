@@ -14,20 +14,22 @@ var defaultTokenSource = &cookieTokenSource{
 }
 
 type Rule struct {
-	redirect    string
-	tokenSource tokenSource
-	authType    int
-	userHeader  string
-	noStrip     bool
+	redirect        string
+	tokenSource     tokenSource
+	authType        int
+	userHeader      string
+	noStrip         bool
+	invalidateToken []string
 }
 
 func newDefaultRule() Rule {
 	return Rule{
-		redirect:    "",
-		tokenSource: defaultTokenSource,
-		authType:    typeHard,
-		userHeader:  "X-Showcase-User",
-		noStrip:     false,
+		redirect:        "",
+		tokenSource:     defaultTokenSource,
+		authType:        typeHard,
+		userHeader:      "X-Showcase-User",
+		noStrip:         false,
+		invalidateToken: []string{},
 	}
 }
 
@@ -98,6 +100,8 @@ func parseBlock(c *caddy.Controller) (Rule, error) {
 			r.userHeader = args[0]
 		case "no_strip":
 			r.noStrip = true
+		case "invalidate_token":
+			r.invalidateToken = c.RemainingArgs()
 		}
 	}
 	return r, nil

@@ -53,6 +53,10 @@ func (h *TrapAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error
 		return h.unauthorized(w, r, rule)
 	}
 
+	if isArrayContained(rule.invalidateToken, tokenString) {
+		return h.unauthorized(w, r, rule)
+	}
+
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (i interface{}, e error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, errors.New("invalid token")
@@ -91,4 +95,15 @@ func (h *TrapAuth) unauthorized(w http.ResponseWriter, r *http.Request, rule Rul
 		return http.StatusSeeOther, nil
 	}
 	return http.StatusUnauthorized, nil
+}
+
+func isArrayContained(strArr []string, str string) bool {
+	isContained := false
+	for _, s := range strArr {
+		if str == s {
+			isContained = true
+			break
+		}
+	}
+	return isContained
 }
