@@ -2,9 +2,10 @@ package trapauth
 
 import (
 	"crypto/rsa"
-	"github.com/dgrijalva/jwt-go"
 	"net/http"
 	"strings"
+
+	"github.com/golang-jwt/jwt"
 )
 
 const pubkeyPEM = `
