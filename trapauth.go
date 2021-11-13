@@ -207,11 +207,20 @@ func (m *Middleware) unauthorized(w http.ResponseWriter, r *http.Request, next c
 
 func isArrayContained(strArr []string, str string) bool {
 	isContained := false
+	str = addPadding(str)
 	for _, s := range strArr {
-		if str == s {
+		if str == addPadding(s) {
 			isContained = true
 			break
 		}
 	}
 	return isContained
+}
+
+// https://github.com/dgrijalva/jwt-go/blob/9742bd7fca1c67ba2eb793750f56ee3094d1b04f/token.go#L101
+func addPadding(s string) string {
+	if l := len(s) % 4; l > 0 {
+		s += strings.Repeat("=", 4-l)
+	}
+	return s
 }
