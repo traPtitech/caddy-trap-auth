@@ -150,6 +150,12 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return m.unauthorized(w, r, next)
 	}
 
+	// jwtのライブラリの実装によっては、仕様では許可されていないbase64のパディング(`=`)が
+	// 付与されている場合があるので注意すること
+	// jwt-goのv3.2.2以降ではパディングが付与されているものは、
+	// デコードできないようになっているので、
+	// ここでは特に処理をする必要はない
+	// see https://wiki.trap.jp/SysAd/ops/2021-11-14
 	if isArrayContained(m.InvalidateToken, tokenString) {
 		return m.unauthorized(w, r, next)
 	}
@@ -207,20 +213,11 @@ func (m *Middleware) unauthorized(w http.ResponseWriter, r *http.Request, next c
 
 func isArrayContained(strArr []string, str string) bool {
 	isContained := false
-	str = addPadding(str)
 	for _, s := range strArr {
-		if str == addPadding(s) {
+		if str == s {
 			isContained = true
 			break
 		}
 	}
 	return isContained
-}
-
-// https://github.com/dgrijalva/jwt-go/blob/9742bd7fca1c67ba2eb793750f56ee3094d1b04f/token.go#L101
-func addPadding(s string) string {
-	if l := len(s) % 4; l > 0 {
-		s += strings.Repeat("=", 4-l)
-	}
-	return s
 }
