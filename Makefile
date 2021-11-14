@@ -1,6 +1,6 @@
 .PHONY: init
 init:
-	GO111MODULE=off go get -u github.com/caddyserver/xcaddy/cmd/xcaddy
+	go get install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 .PHONY: run-test-server
 run-test-server:
